@@ -1,0 +1,11 @@
+package com.simebarisic.goldtracker.repository;
+
+import com.simebarisic.goldtracker.model.ChangeLog;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface ChangeLogRepository extends JpaRepository<ChangeLog, Long> {
+    List<ChangeLog> findAllByOrderByDetectedAtDesc(Pageable pageable);
+}

@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gold_tracker
+      POSTGRES_USER: gold_tracker
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - gold_tracker_db_data:/var/lib/postgresql/data
+
+  backend:
+    image: ghcr.io/simebarisic/gold-tracker-backend:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: gold_tracker
+      DB_USER: gold_tracker
+      DB_PASSWORD: change-me
+      PORT: 4100
+    ports:
+      - "4100:4100"
+
+  frontend:
+    image: ghcr.io/simebarisic/gold-tracker-frontend:latest
+    pull_policy: always
+    container_name: gold-tracker
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  gold_tracker_db_data:

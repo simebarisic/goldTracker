@@ -1,0 +1,47 @@
+server:
+  port: ${PORT:4100}
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:gold_tracker}
+    username: ${DB_USER:gold_tracker}
+    password: ${DB_PASSWORD:change-me}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  flyway:
+    enabled: true
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASS:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: ${SMTP_SECURE:true}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
+
+# === Scraper ===
+app:
+  scraper:
+    request-delay-ms: ${REQUEST_DELAY_MS:3000}
+    price-sanity-max-ratio: ${PRICE_SANITY_MAX_RATIO:5}
+  scheduler:
+    cron: ${CRON_SCHEDULE:0 7 * * *}
+    timezone: ${TIMEZONE:Europe/Zagreb}
+  email:
+    enabled: ${EMAIL_ENABLED:true}
+    from: ${EMAIL_FROM:}
+    to: ${EMAIL_TO:}
+
+logging:
+  level:
+    com.simebarisic.goldtracker: INFO
