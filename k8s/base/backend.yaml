@@ -1,0 +1,129 @@
+# Ime "backend" namjerno: frontend nginx.conf radi proxy_pass na http://backend:4100
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+spec:
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - name: http
+      port: 4100
+      targetPort: http
+---
+# Spring Boot backend sa scraperom i dnevnim schedulerom (CRON_SCHEDULE).
+# Recreate + 1 replika: tijekom rolling updatea bi 2 poda mogla istovremeno
+# pokrenuti scheduler i poslati duple emailove.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+    spec:
+      # Bez automatskih <SERVIS>_PORT/_HOST env varijabli za svaki Service u
+      # namespaceu - znaju se sudariti s env varijablama aplikacije (npr. PORT).
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Čeka da Postgres prihvaća konekcije prije starta aplikacije (umjesto
+      # nekoliko CrashLoopBackOff restartova dok se baza diže).
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -U gold_tracker; do echo 'čekam postgres...'; sleep 2; done"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: backend
+          image: gold-tracker-backend
+          ports:
+            - name: http
+              containerPort: 4100
+          envFrom:
+            - configMapRef:
+                name: gold-tracker-config
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gold-tracker-secrets
+                  key: POSTGRES_PASSWORD
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: gold-tracker-secrets
+                  key: SMTP_USER
+                  optional: true
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: gold-tracker-secrets
+                  key: SMTP_PASS
+                  optional: true
+            - name: EMAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: gold-tracker-secrets
+                  key: EMAIL_FROM
+                  optional: true
+            - name: EMAIL_TO
+              valueFrom:
+                secretKeyRef:
+                  name: gold-tracker-secrets
+                  key: EMAIL_TO
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

@@ -1,0 +1,35 @@
+# Lokalni klaster za učenje: k3d (k3s u Dockeru) + Traefik + cert-manager.
+# Pokretanje: ./scripts/k8s-local.sh up   (vidi README, sekcija Kubernetes)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: gold-tracker
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - tls-issuer.yaml
+  - ingress.yaml
+  - certificate.yaml
+
+# Image se builda lokalno i uvozi u k3d (k3d image import) - nema pulla iz registryja.
+images:
+  - name: gold-tracker-backend
+    newName: gold-tracker-backend
+    newTag: local
+  - name: gold-tracker-frontend
+    newName: gold-tracker-frontend
+    newTag: local
+
+configMapGenerator:
+  - name: gold-tracker-config
+    behavior: merge
+    literals:
+      - EMAIL_ENABLED=false
+
+# secret.env NIJE u gitu (vidi .gitignore). "./scripts/k8s-local.sh up" ga sam
+# kreira s nasumičnim vrijednostima; predložak je secret.env.example.
+secretGenerator:
+  - name: gold-tracker-secrets
+    envs:
+      - secret.env

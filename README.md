@@ -167,3 +167,14 @@ gold-tracker/
 ├── docker-compose.prod.yml           # povlaci gotove image s GHCR-a
 └── .github/workflows/docker-publish.yml
 ```
+
+## Kubernetes (lokalno, za učenje)
+
+Kustomize manifesti su u `k8s/`, lokalni k3d klaster se diže jednom naredbom:
+
+```bash
+brew install k3d kubectl      # jednom
+./scripts/k8s-local.sh up
+```
+
+Detalji (struktura, adrese, specifičnosti ovog projekta, CI): [`k8s/README.md`](k8s/README.md).

@@ -1,0 +1,35 @@
+# Lokalni lanac certifikata preko cert-managera ("CA issuer" uzorak):
+#   1) self-signed Issuer potpiše
+#   2) vlastiti lokalni CA (Gold Tracker Local CA), koji onda
+#   3) kao CA Issuer izdaje certifikat za Ingress.
+# Nakon ./scripts/k8s-local.sh trust-ca macOS vjeruje tom CA -> HTTPS bez upozorenja.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: local-ca
+spec:
+  isCA: true
+  commonName: Gold Tracker Local CA
+  secretName: local-ca
+  duration: 87600h   # 10 godina
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-bootstrap
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: local-ca
+spec:
+  ca:
+    secretName: local-ca

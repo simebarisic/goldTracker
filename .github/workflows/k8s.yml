@@ -1,0 +1,94 @@
+name: K8s - validacija i test deploy
+
+# Tvoj lokalni k3d klaster GitHub ne vidi, pa CI na svakom runu digne
+# EFEMERNI k3d klaster na runneru, deploya aplikaciju istim manifestima
+# (overlays/ci) i provjeri da stvarno radi. Klaster nestaje s krajem joba.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "k8s/**"
+      - ".github/workflows/k8s.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validacija manifesta (kustomize + kubeconform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instaliraj kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin kubeconform
+
+      - name: kustomize build + kubeconform za svaki overlay
+        run: |
+          # overlaye koji traže secret.env (nije u gitu) validiramo s primjerom
+          for ex in k8s/overlays/*/secret.env.example; do
+            [ -f "$ex" ] && cp "$ex" "${ex%.example}"
+          done
+          for o in k8s/overlays/*/; do
+            echo "::group::$o"
+            kubectl kustomize "$o" | kubeconform -strict -summary \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            echo "::endgroup::"
+          done
+
+  e2e:
+    name: Test deploy na k3d
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image(a)
+        run: |
+          docker build -t gold-tracker-backend:ci ./backend
+          docker build -t gold-tracker-frontend:ci ./frontend
+
+      - name: Instaliraj k3d i digni klaster
+        run: |
+          curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d cluster create ci --wait --no-lb --k3s-arg "--disable=traefik@server:0"
+          k3d image import gold-tracker-backend:ci gold-tracker-frontend:ci -c ci
+          kubectl get nodes
+
+      - name: Deploy (kubectl apply -k k8s/overlays/ci)
+        run: |
+          kubectl apply -k k8s/overlays/ci
+          kubectl -n gold-tracker rollout status statefulset/postgres --timeout=420s
+          kubectl -n gold-tracker rollout status deploy/backend --timeout=420s
+          kubectl -n gold-tracker rollout status deploy/frontend --timeout=420s
+
+      - name: Smoke test
+        run: |
+          set -e
+          kubectl -n gold-tracker port-forward svc/backend 18081:4100 >/tmp/pf-18081.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:18081/actuator/health >/dev/null && break; sleep 2; done
+          echo "--- backend/actuator/health"; curl -sf localhost:18081/actuator/health | grep -q '"UP"'
+          kubectl -n gold-tracker port-forward svc/frontend 18082:80 >/tmp/pf-18082.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:18082/ >/dev/null && break; sleep 2; done
+          echo "--- frontend/"; curl -sf localhost:18082/ > /dev/null
+          echo "Smoke test prošao"
+
+      - name: Test backup CronJoba
+        run: |
+          kubectl -n gold-tracker create job --from=cronjob/postgres-backup backup-ci
+          kubectl -n gold-tracker wait --for=condition=complete job/backup-ci --timeout=180s
+          kubectl -n gold-tracker logs job/backup-ci
+
+      - name: Dijagnostika (samo ako nešto padne)
+        if: failure()
+        run: |
+          kubectl -n gold-tracker get all,pvc,networkpolicy,events --sort-by=.metadata.creationTimestamp || true
+          kubectl -n gold-tracker describe pods || true
+          for d in $(kubectl -n gold-tracker get deploy,statefulset -o name); do
+            echo "===== $d"; kubectl -n gold-tracker logs "$d" --all-containers --tail=150 || true
+          done

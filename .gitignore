@@ -1,2 +1,5 @@
 .env
 .DS_Store
+
+# Kubernetes lokalni secreti
+k8s/overlays/local/secret.env

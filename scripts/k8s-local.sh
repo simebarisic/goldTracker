@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Lokalni Kubernetes za Gold Tracker: k3d (k3s u Dockeru) + Traefik + cert-manager.
+#
+#   ./scripts/k8s-local.sh up        kreira/pokrene klaster, builda image(e) i deploya
+#   ./scripts/k8s-local.sh deploy    samo rebuild imagea + ponovni deploy (nakon promjene koda)
+#   ./scripts/k8s-local.sh status    pregled podova, servisa, ingressa, certifikata
+#   ./scripts/k8s-local.sh logs      prati logove aplikacije
+#   ./scripts/k8s-local.sh backup    ručno pokreni backup baze (Job iz CronJoba)
+#   ./scripts/k8s-local.sh trust-ca  doda lokalni CA u macOS Keychain (HTTPS bez upozorenja)
+#   ./scripts/k8s-local.sh stop      pauzira klaster (podaci ostaju), "up" ga opet pokrene
+#   ./scripts/k8s-local.sh down      obriše cijeli klaster (i sve podatke u njemu!)
+#
+# Treba: Docker Desktop (upaljen), k3d, kubectl  ->  brew install k3d kubectl
+# Svaki projekt ima svoj klaster, a svi koriste portove 80/443 - pa u jednom
+# trenutku radi samo jedan (skripta te upozori ako je drugi upaljen).
+set -euo pipefail
+
+CLUSTER=gold-tracker
+NS=gold-tracker
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OVERLAY="$ROOT/k8s/overlays/local"
+CERT_MANAGER_URL=https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+
+need() { command -v "$1" >/dev/null || { echo "Nedostaje '$1'. Instaliraj: brew install $2" >&2; exit 1; }; }
+
+ensure_secret_env() {
+  if [ ! -f "$OVERLAY/secret.env" ]; then
+    echo "==> Kreiram $OVERLAY/secret.env s nasumičnim tajnama (vidi secret.env.example)"
+    cat > "$OVERLAY/secret.env" <<ENV
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+SMTP_USER=
+SMTP_PASS=
+EMAIL_FROM=
+EMAIL_TO=
+ENV
+  fi
+}
+
+check_other_clusters() {
+  # Drugi upaljeni k3d klaster već drži portove 80/443.
+  local others
+  others="$(k3d cluster list --no-headers 2>/dev/null | awk -v c="$CLUSTER" '$1!=c && $2 ~ /^[1-9]/ {print $1}')"
+  if [ -n "$others" ]; then
+    echo "Upaljen je drugi k3d klaster koji koristi portove 80/443: $others" >&2
+    echo "Ugasi ga pa pokreni ponovno:  k3d cluster stop $others" >&2
+    exit 1
+  fi
+}
+
+create_cluster() {
+  check_other_clusters
+  if k3d cluster list "$CLUSTER" >/dev/null 2>&1; then
+    echo "==> Klaster '$CLUSTER' postoji - pokrećem ga (ako je bio zaustavljen)"
+    k3d cluster start "$CLUSTER" --wait
+  else
+    echo "==> Kreiram k3d klaster '$CLUSTER' (portovi 80/443 -> Traefik)"
+    k3d cluster create "$CLUSTER" \
+      --agents 1 \
+      -p "80:80@loadbalancer" \
+      -p "443:443@loadbalancer" \
+      --wait
+  fi
+  kubectl config use-context "k3d-$CLUSTER" >/dev/null
+
+  if ! kubectl get ns cert-manager >/dev/null 2>&1; then
+    echo "==> Instaliram cert-manager"
+    kubectl apply -f "$CERT_MANAGER_URL"
+  fi
+  echo "==> Čekam cert-manager..."
+  kubectl -n cert-manager rollout status deploy/cert-manager-webhook --timeout=180s
+}
+
+build_and_import() {
+  echo "==> Buildam gold-tracker-backend:local"
+  docker build -t gold-tracker-backend:local "$ROOT/backend"
+  echo "==> Buildam gold-tracker-frontend:local"
+  docker build -t gold-tracker-frontend:local "$ROOT/frontend"
+  echo "==> Uvozim image(e) u k3d"
+  k3d image import gold-tracker-backend:local gold-tracker-frontend:local -c "$CLUSTER"
+}
+
+deploy() {
+  kubectl config use-context "k3d-$CLUSTER" >/dev/null
+  ensure_secret_env
+  # Deploymenti koji su postojali PRIJE applyja - samo njih treba restartati
+  # (tag 'local' se ne mijenja, pa Kubernetes sam ne bi primijetio novi image).
+  # Pri prvom deployu nema čega restartati - inače bi se svaki pod dizao dvaput.
+  local existing_deploys
+  existing_deploys="$(kubectl -n "$NS" get deploy -o name 2>/dev/null || true)"
+  echo "==> kubectl apply -k k8s/overlays/local"
+  kubectl apply -k "$OVERLAY"
+  if [ -n "$existing_deploys" ]; then
+    kubectl -n "$NS" rollout restart $existing_deploys
+  fi
+  kubectl -n "$NS" rollout status statefulset/postgres --timeout=300s
+  kubectl -n "$NS" rollout status deploy/backend --timeout=300s
+  kubectl -n "$NS" rollout status deploy/frontend --timeout=300s
+  echo
+  echo "Gotovo:"
+  echo "  https://gold.localtest.me"
+  echo "(Upozorenje preglednika o certifikatu makneš s: ./scripts/k8s-local.sh trust-ca)"
+}
+
+case "${1:-}" in
+  up)
+    need docker "--cask docker"; need k3d k3d; need kubectl kubectl
+    create_cluster; build_and_import; deploy ;;
+  deploy)
+    need docker "--cask docker"; need k3d k3d; need kubectl kubectl
+    build_and_import; deploy ;;
+  status)
+    kubectl -n "$NS" get pods,svc,ingress,pvc,cronjob,certificate -o wide ;;
+  logs)
+    kubectl -n "$NS" logs -f deploy/backend ;;
+  backup)
+    job="backup-rucno-$(date +%s)"
+    kubectl -n "$NS" create job --from=cronjob/postgres-backup "$job"
+    kubectl -n "$NS" wait --for=condition=complete "job/$job" --timeout=120s
+    kubectl -n "$NS" logs "job/$job" ;;
+  trust-ca)
+    tmp="$(mktemp)"
+    kubectl -n "$NS" get secret local-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$tmp"
+    echo "==> Dodajem 'Gold Tracker Local CA' u login Keychain (tražit će lozinku)"
+    security add-trusted-cert -r trustRoot -k "$HOME/Library/Keychains/login.keychain-db" "$tmp"
+    rm -f "$tmp"
+    echo "Gotovo. Restartaj preglednik." ;;
+  stop)
+    k3d cluster stop "$CLUSTER" ;;
+  down)
+    k3d cluster delete "$CLUSTER" ;;
+  *)
+    sed -n '2,15p' "$0"; exit 1 ;;
+esac

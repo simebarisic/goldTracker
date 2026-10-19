@@ -1,0 +1,25 @@
+# Overlay za GitHub Actions (.github/workflows/k8s.yml): efemerni k3d klaster
+# bez Ingressa/TLS-a, smoke test ide preko kubectl port-forward.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: gold-tracker
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+# Image builda CI job i uvozi ga u k3d.
+images:
+  - name: gold-tracker-backend
+    newName: gold-tracker-backend
+    newTag: ci
+  - name: gold-tracker-frontend
+    newName: gold-tracker-frontend
+    newTag: ci
+
+# Testne vrijednosti - CI klaster se briše na kraju joba.
+secretGenerator:
+  - name: gold-tracker-secrets
+    literals:
+      - POSTGRES_PASSWORD=ci-test-lozinka-0123456789

@@ -1,0 +1,23 @@
+# Ingress preko Traefika (ugrađen u k3s/k3d). TLS certifikat u secretu
+# "gold-tracker-tls" izdaje cert-manager prema certificate.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gold-tracker
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - gold.localtest.me
+      secretName: gold-tracker-tls
+  rules:
+    - host: gold.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

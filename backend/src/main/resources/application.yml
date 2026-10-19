@@ -42,6 +42,21 @@ app:
     from: ${EMAIL_FROM:}
     to: ${EMAIL_TO:}
 
+# Samo health endpoint (Kubernetes probe: /actuator/health/liveness i /readiness).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    mail:
+      enabled: false   # SMTP ne smije rušiti readiness
+
 logging:
   level:
     com.simebarisic.goldtracker: INFO

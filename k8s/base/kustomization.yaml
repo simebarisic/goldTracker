@@ -1,0 +1,34 @@
+# Zajednička osnova. Overlaye (k8s/overlays/*) postavljaju namespace, image
+# tagove, Ingress/TLS i secrete. Base se NE deploya sam.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: gold-tracker
+    includeSelectors: false
+
+resources:
+  - postgres.yaml
+  - backend.yaml
+  - frontend.yaml
+  - backup.yaml
+
+# Ne-tajne postavke. Kustomize dodaje hash u ime ConfigMapa, pa svaka promjena
+# automatski pokreće rolling restart Deploymenta koji ga koriste.
+configMapGenerator:
+  - name: gold-tracker-config
+    literals:
+      - PORT=4100
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=gold_tracker
+      - DB_USER=gold_tracker
+      - CRON_SCHEDULE=0 7 * * *
+      - TIMEZONE=Europe/Zagreb
+      - REQUEST_DELAY_MS=3000
+      - PRICE_SANITY_MAX_RATIO=5
+      - EMAIL_ENABLED=false
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=465
+      - SMTP_SECURE=true
