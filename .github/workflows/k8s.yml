@@ -55,10 +55,22 @@ jobs:
 
       - name: Instaliraj k3d i digni klaster
         run: |
-          curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-          k3d cluster create ci --wait --no-lb --k3s-arg "--disable=traefik@server:0"
+          curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.7.4 bash
+          # fiksni API port: ako se server kontejner restarta, kubeconfig i dalje vrijedi
+          k3d cluster create ci --wait --timeout 180s --no-lb \
+            --api-port 127.0.0.1:6550 \
+            --k3s-arg "--disable=traefik@server:0"
           k3d image import gold-tracker-backend:ci gold-tracker-frontend:ci -c ci
-          kubectl get nodes
+
+      - name: Cekaj da API server bude spreman
+        run: |
+          for i in $(seq 1 60); do
+            kubectl get --raw=/readyz >/dev/null 2>&1 && break
+            echo "API jos nije spreman ($i)"; sleep 3
+          done
+          kubectl get --raw=/readyz
+          kubectl wait --for=condition=Ready nodes --all --timeout=180s
+          kubectl get nodes -o wide
 
       - name: Deploy (kubectl apply -k k8s/overlays/ci)
         run: |
@@ -87,6 +99,8 @@ jobs:
       - name: Dijagnostika (samo ako nešto padne)
         if: failure()
         run: |
+          docker ps -a || true
+          docker logs --tail=200 k3d-ci-server-0 || true
           kubectl -n gold-tracker get all,pvc,networkpolicy,events --sort-by=.metadata.creationTimestamp || true
           kubectl -n gold-tracker describe pods || true
           for d in $(kubectl -n gold-tracker get deploy,statefulset -o name); do
