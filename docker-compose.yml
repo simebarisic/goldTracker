@@ -4,6 +4,12 @@
 services:
   db:
     mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gold_tracker -d gold_tracker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -15,6 +21,12 @@ services:
 
   backend:
     mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4100/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     build: ./backend
     restart: unless-stopped
     depends_on:
@@ -33,6 +45,12 @@ services:
 
   frontend:
     mem_limit: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     build: ./frontend
     container_name: gold-tracker
     restart: unless-stopped
