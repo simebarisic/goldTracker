@@ -56,8 +56,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-- Frontend (dashboard): http://localhost:8080
-- Backend API direktno: http://localhost:4100/api/...
+- Frontend (dashboard): http://localhost:3060
+- Backend API direktno: http://localhost:4100/api/... (samo s ovog računala)
 - Postgres podaci ostaju u Docker volumenu `gold_tracker_db_data`
 
 ## Razvoj bez Dockera
