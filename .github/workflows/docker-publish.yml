@@ -53,3 +53,46 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # GitOps: upiše novi tag u apps-config (apps/gold-tracker/envs/dev), a Argo CD ga deploya na DEV.
+  # Pristup apps-configu: GitHub App (varijabla CONFIG_APP_CLIENT_ID + secret CONFIG_APP_PRIVATE_KEY).
+  # Dok varijabla ne postoji, job se preskače.
+  update-dev:
+    name: Novi tag na DEV (apps-config)
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && vars.CONFIG_APP_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: apps-config-gold-tracker-dev
+      cancel-in-progress: false
+    steps:
+      - name: Token za apps-config (GitHub App, vrijedi 1 h)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CONFIG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CONFIG_APP_PRIVATE_KEY }}
+          owner: simebarisic
+          repositories: apps-config
+
+      - name: Checkout apps-config
+        uses: actions/checkout@v7
+        with:
+          repository: simebarisic/apps-config
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Upiši tag i pushaj
+        run: |
+          TAG="sha-${GITHUB_SHA::7}"   # isti tag koji je build objavio na GHCR
+          ./scripts/set-tag.sh gold-tracker dev "$TAG"
+          if git diff --quiet; then echo "DEV je već na $TAG"; exit 0; fi
+          git config user.name "gold-tracker-ci"
+          git config user.email "gold-tracker-ci@users.noreply.github.com"
+          git commit -qam "gold-tracker: DEV -> $TAG ($GITHUB_SHA)"
+          # Ako je netko u međuvremenu pushao u apps-config, povuci i pokušaj ponovno.
+          for i in 1 2 3; do
+            git push && exit 0
+            git pull --rebase
+          done
+          exit 1
